@@ -35,14 +35,6 @@ Built as a POC project with production habits: Clean Architecture enforced in CI
   </tr>
 </table>
 
-## How it works, for non-technical readers
-
-Three short PDFs:
-
-- **[RAG, explained](docs/diagrams/rag-explained.pdf):** what RAG is; chunking, embeddings, vectors and vector databases; why both simple RAG and our Agentic RAG need just two AI models; and Ask vs Agent in detail.
-- **[How a document becomes searchable](docs/diagrams/document-upload-flow.pdf):** upload, background processing, and the one step where AI is used.
-- **[How a question gets an answer](docs/diagrams/question-answer-flow.pdf):** search, AI review, a cited answer, and the guards against made-up answers.
-
 ## Architecture
 
 ```mermaid

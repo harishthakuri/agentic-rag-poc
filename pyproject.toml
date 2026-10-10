@@ -1,0 +1,170 @@
+[project]
+name = "agentic-rag"
+version = "0.1.0"
+description = "Agentic RAG with hybrid search, reranking, citations and an evaluation harness. FastAPI, PostgreSQL + pgvector, Clean Architecture; runs fully local with Ollama."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.13"
+dependencies = [
+    "alembic>=1.20.0",
+    "asyncpg>=0.32.0",
+    "fastapi>=0.142.2",
+    "openai>=3.26.0",
+    "opentelemetry-api>=1.45.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.1",
+    "opentelemetry-instrumentation-fastapi>=0.66b1",
+    "opentelemetry-instrumentation-sqlalchemy>=0.66b1",
+    "opentelemetry-sdk>=1.45.1",
+    "pgvector>=0.5.0",
+    "pydantic-settings>=2.15.0",
+    "pypdf>=6.19.0",
+    "python-multipart>=0.0.32",
+    "sqlalchemy[asyncio]>=2.1.4",
+    "structlog>=26.1.0",
+    "tiktoken>=0.14.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.optional-dependencies]
+# Cross-encoder reranker (RERANKER=cross_encoder). Pulls in PyTorch (~1 GB), so it
+# is opt-in: uv sync --extra rerank
+rerank = [
+    "sentence-transformers>=5.0.0",
+]
+# Layout-aware PDF parsing with tables and OCR (PDF_PARSER=docling). Also pulls in
+# PyTorch, plus an OCR engine: macOS Vision on a Mac, RapidOCR (ONNX) elsewhere.
+docling = [
+    "docling>=2.0",
+    "ocrmac>=1.0 ; sys_platform == 'darwin'",
+    "onnxruntime>=1.20",
+]
+
+[project.scripts]
+rag-admin = "app.presentation.cli.__main__:main"
+rag-worker = "app.worker:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "httpx2>=2.13.1",
+    "import-linter>=2.15",
+    "mypy>=2.4.0",
+    "pre-commit>=4.6.2",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.10",
+    "testcontainers[postgres]>=4.15.0",
+]
+
+# ---------------------------------------------------------------------------
+# Ruff: linting + formatting
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "B",        # bugbear
+    "UP",       # pyupgrade
+    "SIM",      # simplify
+    "RUF",      # ruff-specific
+    "ASYNC",    # async pitfalls
+    "S",        # bandit (security)
+    "PTH",      # prefer pathlib
+    "TC",       # type-checking imports
+]
+ignore = ["TC001", "TC002", "TC003"]  # FastAPI/Pydantic need runtime type imports
+
+[tool.ruff.lint.isort]
+known-third-party = ["alembic"]  # the local alembic/ folder is not a package
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]  # asserts and throwaway test credentials
+
+# ---------------------------------------------------------------------------
+# Mypy: strict everywhere except migrations
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.13"
+strict = true
+plugins = ["pydantic.mypy"]
+exclude = ["^alembic/"]
+
+[[tool.mypy.overrides]]
+module = ["asyncpg.*", "pgvector.*", "testcontainers.*", "sentence_transformers.*", "torch.*"]
+ignore_missing_imports = true
+
+# Optional extra (uv sync --extra docling): typed as Any whether installed or not, so
+# CI (without the extra) and a full local install check the same thing.
+[[tool.mypy.overrides]]
+module = ["docling.*", "docling_core.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+markers = [
+    "integration: needs Docker (testcontainers + pgvector)",
+    "live: calls real Ollama/OpenAI models; opt-in with -m live",
+]
+addopts = "-ra --strict-markers -m 'not live'"
+filterwarnings = [
+    # Alembic notes it can't diff generated columns (chunks.tsv); expected.
+    "ignore:Computed default on .* cannot be modified:UserWarning",
+]
+
+# ---------------------------------------------------------------------------
+# Import Linter: enforces the Clean Architecture dependency rule
+# ---------------------------------------------------------------------------
+[tool.importlinter]
+root_package = "app"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture: outer layers depend on inner layers only"
+type = "layers"
+layers = [
+    "app.presentation",
+    "app.bootstrap",
+    "app.infrastructure",
+    "app.application",
+    "app.domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "Domain is pure Python (no frameworks, no app.core)"
+type = "forbidden"
+source_modules = ["app.domain"]
+forbidden_modules = ["app.core", "fastapi", "starlette", "sqlalchemy", "pydantic_settings", "openai", "structlog"]
+
+[[tool.importlinter.contracts]]
+name = "Application does not depend on frameworks or drivers"
+type = "forbidden"
+source_modules = ["app.application"]
+forbidden_modules = ["app.core", "fastapi", "starlette", "sqlalchemy", "openai", "opentelemetry"]
+
+[[tool.importlinter.contracts]]
+name = "Presentation reaches infrastructure only through the composition root"
+type = "forbidden"
+source_modules = ["app.presentation"]
+forbidden_modules = ["app.infrastructure", "sqlalchemy"]
+allow_indirect_imports = true  # going through app.bootstrap is the intended path

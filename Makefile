@@ -1,0 +1,92 @@
+.DEFAULT_GOAL := help
+.PHONY: help install install-base obs-grafana obs-langfuse obs-up obs-down run worker api-key ingest-samples ingest-benchmark benchmark-docs eval eval-retrieval up down logs fmt lint typecheck arch test test-integration check migrate migration downgrade
+
+help: ## Show available commands
+	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+
+install: ## Install dependencies (incl. the rerank and docling extras) and git hooks
+	uv sync --extra rerank --extra docling
+	uv run pre-commit install
+
+install-base: ## Install without the optional extras (no PyTorch; smaller, like CI)
+	uv sync
+	uv run pre-commit install
+
+run: ## Run the API with auto-reload
+	uv run uvicorn app.main:create_app --factory --reload
+
+worker: ## Run the ingestion worker (parses, chunks and embeds uploaded documents)
+	uv run rag-worker
+
+api-key: ## Issue an API key: make api-key name=dev
+	uv run rag-admin api-key create --name "$(name)"
+
+ingest-samples: ## Upload sample_data/ (needs RAG_API_KEY, make run and make worker)
+	uv run python scripts/ingest_samples.py
+
+ingest-benchmark: ## Upload data/benchmark/docs into the 'benchmark' collection (needs RAG_API_KEY)
+	uv run python scripts/ingest_samples.py --dir data/benchmark/docs --collection benchmark \
+		--description "Benchmark corpus: Kubernetes, PostgreSQL, MDN HTTP docs, pgvector"
+
+benchmark-docs: ## Download the benchmark corpus (third-party docs) into data/benchmark/docs
+	uv run python scripts/download_benchmark_docs.py
+
+eval: ## Evaluate retrieval and answers (slow: many LLM calls; see evals/__main__.py)
+	uv run python -m evals
+
+eval-retrieval: ## Evaluate retrieval only (fast)
+	uv run python -m evals --skip-answers
+
+up: ## Start the Docker stack (Postgres, migrations, API, worker) at http://localhost:8000
+	docker compose up -d --build
+
+down: ## Stop the Docker stack (data volumes are kept; add -v to delete them)
+	docker compose down
+
+obs-grafana: ## Start Grafana LGTM (traces, metrics, logs) at http://localhost:3000
+	docker compose -f observability/grafana/docker-compose.yml up -d
+
+obs-langfuse: ## Start Langfuse (LLM traces) at http://localhost:3001
+	docker compose -f observability/langfuse/docker-compose.yml up -d
+
+obs-up: obs-grafana obs-langfuse ## Start both observability stacks
+
+obs-down: ## Stop both observability stacks (data is kept; add -v to delete it)
+	docker compose -f observability/grafana/docker-compose.yml down
+	docker compose -f observability/langfuse/docker-compose.yml down
+
+logs: ## Follow logs of the Docker stack
+	docker compose logs -f api worker
+
+fmt: ## Format code
+	uv run ruff format .
+	uv run ruff check --fix .
+
+lint: ## Lint code
+	uv run ruff check .
+
+typecheck: ## Static type checking
+	uv run mypy app tests evals
+
+arch: ## Verify Clean Architecture import contracts
+	uv run lint-imports
+
+test: ## Run unit and e2e tests
+	uv run pytest -m "not integration and not live"
+
+# Ryuk (testcontainers' cleanup container) must mount the socket path *inside* the
+# Docker VM; this default works for Docker Desktop, Rancher Desktop and Colima.
+test-integration: export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE ?= /var/run/docker.sock
+test-integration: ## Run integration tests (requires Docker)
+	uv run pytest -m integration
+
+check: lint typecheck arch test ## Everything CI runs
+
+migrate: ## Apply all migrations (uses MIGRATIONS_DATABASE_URL)
+	uv run alembic upgrade head
+
+migration: ## Create a migration: make migration m="add chunks table"
+	uv run alembic revision --autogenerate -m "$(m)"
+
+downgrade: ## Roll back one migration
+	uv run alembic downgrade -1

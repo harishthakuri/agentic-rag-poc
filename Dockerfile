@@ -26,7 +26,7 @@ ENV TIKTOKEN_CACHE_DIR=/opt/tiktoken
 RUN /app/.venv/bin/python -c "import tiktoken; tiktoken.get_encoding('o200k_base')"
 
 # --- Runtime: slim image, non-root, no build tools ------------------------------
-FROM python:3.13-slim-bookworm AS runtime
+FROM python:3.14-slim-bookworm AS runtime
 
 RUN groupadd --system --gid 10001 app \
     && useradd --system --uid 10001 --gid app --home-dir /app --no-create-home app \
